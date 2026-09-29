@@ -1,15 +1,19 @@
+import AppKit
 import SwiftUI
 
 /// The window for an open PGN file: a list of its games and the selected game.
 struct ContentView: View {
-    @State private var database: GameDatabase
+    let database: GameDatabase
+    /// The file on disk, used to save edits promptly. `nil` for a new, unsaved document.
+    let fileURL: URL?
 
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var selectedGameIndex: Int?
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
-    init(document: PGNDocument) {
-        _database = State(initialValue: GameDatabase(data: document.data))
+    init(document: PGNDocument, fileURL: URL?) {
+        database = document.database
+        self.fileURL = fileURL
     }
 
     var body: some View {
@@ -19,11 +23,19 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        .task {
+        // Keyed by the database, so a reverted document (a new instance) gets indexed too.
+        .task(id: ObjectIdentifier(database)) {
             await database.buildIndex()
             selectedGameIndex = database.gameCount > 0 ? 0 : nil
             // Only show the game list when there's more than one game to choose from.
             columnVisibility = database.gameCount > 1 ? .all : .detailOnly
+        }
+        .task(id: database.revision) {
+            guard database.revision > 0 else { return }
+            do {
+                try await Task.sleep(for: .seconds(1))
+                saveSoon()
+            } catch {}
         }
         .onAppear {
             // Once a file is open, the welcome window has done its job.
@@ -42,7 +54,7 @@ struct ContentView: View {
             .frame(width: 280)
         } else if let selectedGameIndex, selectedGameIndex < database.gameCount {
             // A new identity per game resets the current move and board orientation.
-            GameView(game: database.game(at: selectedGameIndex))
+            GameView(game: database.game(at: selectedGameIndex), database: database)
                 .id(selectedGameIndex)
         } else if database.gameCount == 0 {
             ContentUnavailableView(
@@ -54,6 +66,17 @@ struct ContentView: View {
             ContentUnavailableView("No Game Selected", systemImage: "checkerboard.rectangle")
         }
     }
+
+    /// Asks the system to autosave now, rather than at its next opportunity, so edits reach the
+    /// file within about a second. The document is autosaved in place either way.
+    private func saveSoon() {
+        guard let fileURL, let document = NSDocumentController.shared.document(for: fileURL) else { return }
+        document.autosave(withImplicitCancellability: false) { error in
+            if let error {
+                document.presentError(error)
+            }
+        }
+    }
 }
 
 #Preview {
@@ -63,6 +86,6 @@ struct ContentView: View {
     [White "Anderssen, Adolf"] [Black "Kieseritzky, Lionel"] [Event "London"] [Result "1-0"]
     1.e4 e5 2.f4 exf4 3.Bc4 Qh4+ 4.Kf1 b5 5.Bxb5 Nf6 1-0
     """
-    ContentView(document: PGNDocument(data: Data(pgn.utf8)))
-        .frame(width: 1100, height: 680)
+    ContentView(document: PGNDocument(data: Data(pgn.utf8)), fileURL: nil)
+        .frame(width: 1100, height: 720)
 }

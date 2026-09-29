@@ -12,6 +12,25 @@ nonisolated struct PGNMove: Sendable, Hashable {
     var annotation: String?
     /// The comment that follows the move in the file.
     var comment: String?
+    /// Where the move and its annotations appear in the game's text, for editing.
+    var source = MoveSource()
+}
+
+/// Locations in a game's text, as offsets in Unicode scalars from the start of the game.
+nonisolated struct MoveSource: Sendable, Hashable {
+    /// The move token, including any attached suffix such as the `!?` in `Nf3!?`.
+    var token: Range<Int> = 0..<0
+    /// Where the move itself ends and an attached suffix would begin.
+    var sanEnd = 0
+    /// Move-quality annotations written separately, like a standalone `!` or the NAGs `$1`–`$6`.
+    var separateAnnotations: [Range<Int>] = []
+    /// Comments after the move, including their braces.
+    var comments: [Range<Int>] = []
+
+    /// The end of the move and its annotations, where a new comment belongs.
+    var annotatedEnd: Int {
+        max(token.upperBound, separateAnnotations.map(\.upperBound).max() ?? 0)
+    }
 }
 
 /// One game from a PGN file: its header tags and main-line moves.
@@ -22,6 +41,10 @@ nonisolated struct PGNGame: Identifiable, Sendable, Hashable {
     var moves: [PGNMove] = []
     /// A comment that appears before the first move.
     var initialComment: String?
+    /// Where the comments before the first move appear in the game's text.
+    var initialCommentSources: [Range<Int>] = []
+    /// Where the movetext starts in the game's text, if there is any.
+    var movetextStart: Int?
     var result = "*"
 
     /// The value of a header tag, or `nil` if it's missing or an "unknown" placeholder like `?` or `????.??.??`.

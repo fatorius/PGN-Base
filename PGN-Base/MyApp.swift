@@ -12,8 +12,8 @@ import SwiftUI
         .defaultPosition(.center)
         .keyboardShortcut("1", modifiers: [.command, .shift])
 
-        DocumentGroup(viewing: PGNDocument.self) { file in
-            ContentView(document: file.document)
+        DocumentGroup(newDocument: { PGNDocument() }) { file in
+            ContentView(document: file.document, fileURL: file.fileURL)
         }
         .defaultSize(width: 1000, height: 700)
     }

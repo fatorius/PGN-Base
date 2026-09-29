@@ -21,22 +21,35 @@ nonisolated enum PGNParser {
             variationDepth = 0
         }
 
-        func attach(comment: String) {
-            guard !comment.isEmpty else { return }
+        func attach(comment: String, source: Range<Int>) {
+            // Empty comments are still recorded, so that editing replaces them.
             if game.moves.isEmpty {
-                game.initialComment = [game.initialComment, comment].compactMap(\.self).joined(separator: " ")
+                game.initialCommentSources.append(source)
+                if !comment.isEmpty {
+                    game.initialComment = [game.initialComment, comment].compactMap(\.self).joined(separator: " ")
+                }
             } else {
                 let last = game.moves.count - 1
-                game.moves[last].comment = [game.moves[last].comment, comment].compactMap(\.self).joined(separator: " ")
+                game.moves[last].source.comments.append(source)
+                if !comment.isEmpty {
+                    game.moves[last].comment = [game.moves[last].comment, comment].compactMap(\.self).joined(separator: " ")
+                }
             }
         }
 
-        func attach(annotation: String) {
+        func attach(annotation: String, source: Range<Int>) {
             guard !annotation.isEmpty, !game.moves.isEmpty else { return }
-            game.moves[game.moves.count - 1].annotation = annotation
+            let last = game.moves.count - 1
+            game.moves[last].annotation = annotation
+            game.moves[last].source.separateAnnotations.append(source)
+        }
+
+        func markMovetextStart(at position: Int) {
+            if game.movetextStart == nil { game.movetextStart = position }
         }
 
         while let scalar = reader.peek() {
+            let start = reader.position
             switch scalar {
             case "[":
                 // A tag after moves means the previous game ended without a result token.
@@ -47,12 +60,16 @@ nonisolated enum PGNParser {
                 reader.advance()
                 let comment = reader.read(until: "}")
                 reader.advance()
-                if variationDepth == 0 { attach(comment: Self.normalizeWhitespace(comment)) }
+                if variationDepth == 0 {
+                    attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
+                }
 
             case ";":
                 reader.advance()
                 let comment = reader.read(until: "\n")
-                if variationDepth == 0 { attach(comment: Self.normalizeWhitespace(comment)) }
+                if variationDepth == 0 {
+                    attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
+                }
 
             case "%" where reader.isAtLineStart:
                 // Escape mechanism: the whole line is ignored.
@@ -60,6 +77,7 @@ nonisolated enum PGNParser {
 
             case "(":
                 reader.advance()
+                markMovetextStart(at: start)
                 variationDepth += 1
 
             case ")":
@@ -69,13 +87,15 @@ nonisolated enum PGNParser {
             case "$":
                 reader.advance()
                 let digits = reader.read(while: { $0.properties.numericType != nil })
+                // Other NAGs aren't shown yet, and aren't recorded, so editing leaves them alone.
                 if variationDepth == 0, let nag = Int(digits), let symbol = Self.nagSymbols[nag] {
-                    attach(annotation: symbol)
+                    attach(annotation: symbol, source: start..<reader.position)
                 }
 
             case "*":
                 reader.advance()
                 if variationDepth == 0 {
+                    markMovetextStart(at: start)
                     game.result = "*"
                     finishGame()
                 }
@@ -83,6 +103,7 @@ nonisolated enum PGNParser {
             case _ where Self.isSymbolCharacter(scalar):
                 let token = reader.read(while: Self.isSymbolCharacter)
                 guard variationDepth == 0 else { continue }
+                markMovetextStart(at: start)
                 if ["1-0", "0-1", "1/2-1/2"].contains(token) {
                     game.result = token
                     finishGame()
@@ -94,9 +115,12 @@ nonisolated enum PGNParser {
                     let san = String(token.prefix { $0 != "!" && $0 != "?" })
                     let annotation = String(token.dropFirst(san.count))
                     if san.isEmpty {
-                        attach(annotation: annotation)
+                        attach(annotation: annotation, source: start..<reader.position)
                     } else {
-                        game.moves.append(PGNMove(san: san, annotation: annotation.isEmpty ? nil : annotation))
+                        var move = PGNMove(san: san, annotation: annotation.isEmpty ? nil : annotation)
+                        move.source.token = start..<reader.position
+                        move.source.sanEnd = start + san.unicodeScalars.count
+                        game.moves.append(move)
                         hasMovetext = true
                     }
                 }
@@ -151,6 +175,9 @@ nonisolated private struct ScalarReader {
     init(_ text: String) {
         scalars = Array(text.unicodeScalars)
     }
+
+    /// The current offset, in Unicode scalars from the start of the text.
+    var position: Int { index }
 
     var isAtLineStart: Bool { index == 0 || scalars[index - 1] == "\n" }
 

@@ -1,3 +1,4 @@
+import Combine  // Provides ObservableObject's default publisher, which ReferenceFileDocument requires.
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,14 +10,16 @@ extension UTType {
 /// A PGN file, which may contain any number of games.
 ///
 /// Reading only captures the file's bytes; `GameDatabase` finds and parses the games afterward,
-/// so even very large files open without blocking.
-nonisolated struct PGNDocument: FileDocument {
+/// so even very large files open without blocking. Edits are autosaved in place by the system.
+nonisolated final class PGNDocument: ReferenceFileDocument {
     static let readableContentTypes: [UTType] = [.pgn]
 
-    let data: Data
+    let storage: PGNStorage
+    let database: GameDatabase
 
-    init(data: Data) {
-        self.data = data
+    init(data: Data = Data()) {
+        storage = PGNStorage(original: data)
+        database = GameDatabase(storage: storage)
     }
 
     init(configuration: ReadConfiguration) throws {
@@ -24,11 +27,22 @@ nonisolated struct PGNDocument: FileDocument {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        self.data = data
+        storage = PGNStorage(original: data)
+        database = GameDatabase(storage: storage)
     }
 
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        // The app only views PGN files for now.
-        throw CocoaError(.fileWriteNoPermission)
+    func snapshot(contentType: UTType) throws -> PGNSnapshot {
+        storage.snapshot()
+    }
+
+    func fileWrapper(snapshot: PGNSnapshot, configuration: WriteConfiguration) throws -> FileWrapper {
+        // Stream to a temporary file instead of building the whole file in memory.
+        let temporaryURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).pgn")
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        try snapshot.write(to: temporaryURL)
+        let wrapper = try FileWrapper(url: temporaryURL)
+        // Load (memory-map) the contents now, while the temporary file still exists.
+        _ = wrapper.regularFileContents
+        return wrapper
     }
 }
