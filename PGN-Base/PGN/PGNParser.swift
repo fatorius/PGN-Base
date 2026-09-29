@@ -1,16 +1,24 @@
 import Foundation
 
-/// Reads the games out of PGN text.
-///
-/// Only the main line is kept for now: variations in parentheses are skipped, along with any
-/// comments and annotations inside them.
+/// Reads the games out of PGN text, including variations, into a tree of moves.
 nonisolated enum PGNParser {
     static func parseGames(from text: String) -> [PGNGame] {
         var reader = ScalarReader(text)
         var games: [PGNGame] = []
         var game = PGNGame(id: 0)
         var hasMovetext = false
-        var variationDepth = 0
+
+        /// The node the next move follows.
+        var cursor = 0
+        /// The last move in the current line, which comments, annotations, and variations attach to.
+        var lastMove: Int?
+        /// The enclosing lines, saved when a variation opens and restored when it closes, with
+        /// where the variation opened and its first move.
+        var lineStack: [(cursor: Int, lastMove: Int?, open: Int, firstMove: Int?)] = []
+        /// A comment written before a move, such as at the start of a variation.
+        var leadingComment: String?
+        /// Where the move number before the next move starts.
+        var numberStart: Int?
 
         func finishGame() {
             if hasMovetext || !game.tags.isEmpty {
@@ -18,34 +26,51 @@ nonisolated enum PGNParser {
             }
             game = PGNGame(id: games.count)
             hasMovetext = false
-            variationDepth = 0
+            cursor = 0
+            lastMove = nil
+            lineStack = []
+            leadingComment = nil
+            numberStart = nil
+        }
+
+        func extendBlock(of node: Int, to end: Int) {
+            game.nodes[node].source.blockEnd = max(game.nodes[node].source.blockEnd, end)
         }
 
         func attach(comment: String, source: Range<Int>) {
-            // Empty comments are still recorded, so that editing replaces them.
-            if game.moves.isEmpty {
-                game.initialCommentSources.append(source)
-                if !comment.isEmpty {
-                    game.initialComment = [game.initialComment, comment].compactMap(\.self).joined(separator: " ")
-                }
+            // A comment before the first move belongs to the root; one opening a variation leads its first move.
+            let node: Int
+            if let lastMove {
+                node = lastMove
+            } else if lineStack.isEmpty {
+                node = 0
             } else {
-                let last = game.moves.count - 1
-                game.moves[last].source.comments.append(source)
-                if !comment.isEmpty {
-                    game.moves[last].comment = [game.moves[last].comment, comment].compactMap(\.self).joined(separator: " ")
-                }
+                if !comment.isEmpty { leadingComment = [leadingComment, comment].compactMap(\.self).joined(separator: " ") }
+                return
+            }
+            // Empty comments are still recorded, so that editing replaces them.
+            game.nodes[node].source.comments.append(source)
+            extendBlock(of: node, to: source.upperBound)
+            if !comment.isEmpty {
+                game.nodes[node].comment = [game.nodes[node].comment, comment].compactMap(\.self).joined(separator: " ")
             }
         }
 
         func attach(annotation: String, source: Range<Int>) {
-            guard !annotation.isEmpty, !game.moves.isEmpty else { return }
-            let last = game.moves.count - 1
-            game.moves[last].annotation = annotation
-            game.moves[last].source.separateAnnotations.append(source)
+            guard !annotation.isEmpty, let lastMove else { return }
+            game.nodes[lastMove].annotation = annotation
+            game.nodes[lastMove].source.separateAnnotations.append(source)
+            extendBlock(of: lastMove, to: source.upperBound)
         }
 
         func markMovetextStart(at position: Int) {
             if game.movetextStart == nil { game.movetextStart = position }
+        }
+
+        func finishGame(withResult result: String, at position: Int) {
+            game.result = result
+            game.resultStart = position
+            finishGame()
         }
 
         while let scalar = reader.peek() {
@@ -60,55 +85,69 @@ nonisolated enum PGNParser {
                 reader.advance()
                 let comment = reader.read(until: "}")
                 reader.advance()
-                if variationDepth == 0 {
-                    attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
-                }
+                attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
 
             case ";":
                 reader.advance()
                 let comment = reader.read(until: "\n")
-                if variationDepth == 0 {
-                    attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
-                }
+                attach(comment: Self.normalizeWhitespace(comment), source: start..<reader.position)
 
             case "%" where reader.isAtLineStart:
                 // Escape mechanism: the whole line is ignored.
                 _ = reader.read(until: "\n")
 
             case "(":
+                // A variation is an alternative to the last move, so it branches from that move's parent.
                 reader.advance()
                 markMovetextStart(at: start)
-                variationDepth += 1
+                lineStack.append((cursor, lastMove, start, nil))
+                if let lastMove {
+                    cursor = game.nodes[lastMove].parent ?? 0
+                }
+                lastMove = nil
+                numberStart = nil
 
             case ")":
                 reader.advance()
-                variationDepth = max(0, variationDepth - 1)
+                numberStart = nil
+                if let saved = lineStack.popLast() {
+                    if let firstMove = saved.firstMove {
+                        game.nodes[firstMove].source.variationRange = saved.open..<reader.position
+                    }
+                    cursor = saved.cursor
+                    lastMove = saved.lastMove
+                    leadingComment = nil
+                    if let lastMove {
+                        extendBlock(of: lastMove, to: reader.position)
+                    }
+                }
 
             case "$":
                 reader.advance()
                 let digits = reader.read(while: { $0.properties.numericType != nil })
-                // Other NAGs aren't shown yet, and aren't recorded, so editing leaves them alone.
-                if variationDepth == 0, let nag = Int(digits), let symbol = Self.nagSymbols[nag] {
+                // Other NAGs aren't shown yet, and aren't recorded as annotations, so editing leaves them
+                // alone; they still belong to the move's text, so they move with it.
+                if let nag = Int(digits), let symbol = Self.nagSymbols[nag] {
                     attach(annotation: symbol, source: start..<reader.position)
+                } else if let lastMove {
+                    extendBlock(of: lastMove, to: reader.position)
                 }
 
             case "*":
                 reader.advance()
-                if variationDepth == 0 {
+                if lineStack.isEmpty {
                     markMovetextStart(at: start)
-                    game.result = "*"
-                    finishGame()
+                    finishGame(withResult: "*", at: start)
                 }
 
             case _ where Self.isSymbolCharacter(scalar):
                 let token = reader.read(while: Self.isSymbolCharacter)
-                guard variationDepth == 0 else { continue }
                 markMovetextStart(at: start)
                 if ["1-0", "0-1", "1/2-1/2"].contains(token) {
-                    game.result = token
-                    finishGame()
+                    if lineStack.isEmpty { finishGame(withResult: token, at: start) }
                 } else if token.allSatisfy(\.isNumber) {
                     // Move number, such as the "12" in "12." or "12...".
+                    numberStart = start
                     continue
                 } else {
                     // Split "Nf3!?" into the move and its annotation.
@@ -117,10 +156,22 @@ nonisolated enum PGNParser {
                     if san.isEmpty {
                         attach(annotation: annotation, source: start..<reader.position)
                     } else {
-                        var move = PGNMove(san: san, annotation: annotation.isEmpty ? nil : annotation)
-                        move.source.token = start..<reader.position
-                        move.source.sanEnd = start + san.unicodeScalars.count
-                        game.moves.append(move)
+                        var node = PGNNode(san: san, annotation: annotation.isEmpty ? nil : annotation, parent: cursor)
+                        node.leadingComment = leadingComment
+                        node.source.token = start..<reader.position
+                        node.source.sanEnd = start + san.unicodeScalars.count
+                        node.source.blockEnd = reader.position
+                        node.source.numberStart = numberStart
+                        leadingComment = nil
+                        numberStart = nil
+                        game.nodes.append(node)
+                        let index = game.nodes.count - 1
+                        if let last = lineStack.indices.last, lineStack[last].firstMove == nil {
+                            lineStack[last].firstMove = index
+                        }
+                        game.nodes[cursor].children.append(index)
+                        cursor = index
+                        lastMove = index
                         hasMovetext = true
                     }
                 }

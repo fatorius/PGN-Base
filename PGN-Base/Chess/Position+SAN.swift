@@ -15,6 +15,45 @@ nonisolated enum SANError: Error, Sendable {
 }
 
 extension Position {
+    /// Writes a legal move in Standard Algebraic Notation, such as `Nbd7`, `exd6`, `O-O`, or `e8=Q#`.
+    nonisolated func san(for move: Move) -> String {
+        guard let piece = self[move.from] else { return "" }
+        var san: String
+        if piece.kind == .king, abs(move.to.file - move.from.file) == 2 {
+            san = move.to.file == 6 ? "O-O" : "O-O-O"
+        } else {
+            let isCapture = self[move.to] != nil || (piece.kind == .pawn && move.to == enPassantTarget)
+            if piece.kind == .pawn {
+                san = isCapture ? "\(move.from.fileLetter)x\(move.to.name)" : move.to.name
+                if let promotion = move.promotion {
+                    san += "=\(promotion.letter)"
+                }
+            } else {
+                // Name the source file, rank, or both only when another piece of the same kind can also move there.
+                let rivals = legalMoves.filter { other in
+                    other.to == move.to && other.from != move.from && self[other.from] == piece
+                }
+                var disambiguation = ""
+                if !rivals.isEmpty {
+                    if !rivals.contains(where: { $0.from.file == move.from.file }) {
+                        disambiguation = String(move.from.fileLetter)
+                    } else if !rivals.contains(where: { $0.from.rank == move.from.rank }) {
+                        disambiguation = String(move.from.rank + 1)
+                    } else {
+                        disambiguation = move.from.name
+                    }
+                }
+                san = "\(piece.kind.letter)\(disambiguation)\(isCapture ? "x" : "")\(move.to.name)"
+            }
+        }
+
+        let after = applying(move)
+        if after.isInCheck {
+            san += after.legalMoves.isEmpty ? "#" : "+"
+        }
+        return san
+    }
+
     /// Resolves a move written in Standard Algebraic Notation (such as `Nbd7`, `exd6`, `O-O-O`, or `e8=Q+`)
     /// to a legal move in this position. Also accepts common variants like `0-0` and `e2-e4`.
     nonisolated func move(fromSAN san: String) throws(SANError) -> Move {

@@ -19,8 +19,9 @@ final class GameDatabase {
     /// Header-only games for list rows. Bounded, because people can scroll through huge files.
     @ObservationIgnored private var headerCache: [Int: PGNGame] = [:]
     private static let headerCacheLimit = 5_000
-    /// The most recently parsed full game, since the selected game is requested on every update.
+    /// The most recently parsed full game and its replay, since the selected game is requested on every update.
     @ObservationIgnored private var gameCache: PGNGame?
+    @ObservationIgnored private var replayCache: (gameIndex: Int, replay: GameReplay)?
 
     nonisolated init(storage: PGNStorage) {
         self.storage = storage
@@ -64,6 +65,15 @@ final class GameDatabase {
         return game
     }
 
+    /// The positions reached in every line of the game.
+    func replay(at index: Int) -> GameReplay {
+        let game = game(at: index)
+        if let replayCache, replayCache.gameIndex == index { return replayCache.replay }
+        let replay = game.replay()
+        replayCache = (index, replay)
+        return replay
+    }
+
     /// The game's header tags only, without its moves.
     func header(at index: Int) -> PGNGame {
         if let cached = headerCache[index] { return cached }
@@ -84,18 +94,52 @@ final class GameDatabase {
 
     // MARK: - Editing
 
-    /// Sets the comment after a move, or the game's opening comment when `moveIndex` is `nil`.
-    func setComment(_ comment: String, forMoveAt moveIndex: Int?, inGameAt gameIndex: Int, undoManager: UndoManager?) {
+    /// Sets the comment after a move, or the game's opening comment for the root path.
+    func setComment(_ comment: String, forMoveAt path: MovePath, inGameAt gameIndex: Int, undoManager: UndoManager?) {
         editGame(at: gameIndex, actionName: "Edit Comment", undoManager: undoManager) { text in
-            PGNEditor.settingComment(comment, forMoveAt: moveIndex, in: text)
+            PGNEditor.settingComment(comment, forMoveAt: path, in: text)
         }
     }
 
     /// Sets a move's quality annotation, such as `!?`, or removes it with `nil`.
-    func setAnnotation(_ symbol: String?, forMoveAt moveIndex: Int, inGameAt gameIndex: Int, undoManager: UndoManager?) {
+    func setAnnotation(_ symbol: String?, forMoveAt path: MovePath, inGameAt gameIndex: Int, undoManager: UndoManager?) {
         editGame(at: gameIndex, actionName: symbol == nil ? "Remove Annotation" : "Annotate Move", undoManager: undoManager) { text in
-            PGNEditor.settingAnnotation(symbol, forMoveAt: moveIndex, in: text)
+            PGNEditor.settingAnnotation(symbol, forMoveAt: path, in: text)
         }
+    }
+
+    /// Adds a move after the move at `path`, extending the line or starting a new variation.
+    /// Returns the new move's path.
+    func addMove(
+        _ san: String,
+        moveNumber: String,
+        after path: MovePath,
+        inGameAt gameIndex: Int,
+        undoManager: UndoManager?
+    ) -> MovePath? {
+        var newPath: MovePath?
+        editGame(at: gameIndex, actionName: "Add Move", undoManager: undoManager) { text in
+            guard let result = PGNEditor.addingMove(san, moveNumber: moveNumber, after: path, in: text) else { return text }
+            newPath = result.path
+            return result.text
+        }
+        return newPath
+    }
+
+    /// Promotes or deletes the variation containing the move at `path`, or deletes the moves after it.
+    /// Returns where `currentPath` ends up afterward.
+    func apply(
+        _ edit: PGNEditor.VariationEdit,
+        at path: MovePath,
+        inGameAt gameIndex: Int,
+        currentPath: MovePath,
+        undoManager: UndoManager?
+    ) -> MovePath {
+        let newPath = PGNEditor.path(currentPath, after: edit, at: path, in: game(at: gameIndex))
+        editGame(at: gameIndex, actionName: edit.actionName, undoManager: undoManager) { text in
+            PGNEditor.applying(edit, at: path, in: text) ?? text
+        }
+        return newPath
     }
 
     private func editGame(at index: Int, actionName: String, undoManager: UndoManager?, _ edit: (String) -> String) {
@@ -111,6 +155,7 @@ final class GameDatabase {
     private func replaceBytes(ofGameAt index: Int, with bytes: Data?, actionName: String, undoManager: UndoManager?) {
         let previous = storage.setBytes(bytes, ofGameAt: index)
         gameCache = nil
+        replayCache = nil
         revision += 1
         undoManager?.registerUndo(withTarget: self) { database in
             MainActor.assumeIsolated {

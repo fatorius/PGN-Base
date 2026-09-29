@@ -22,6 +22,18 @@ nonisolated enum PieceKind: Sendable, Hashable {
         default: return nil
         }
     }
+
+    /// The uppercase letter used in SAN; empty for pawns.
+    var letter: String {
+        switch self {
+        case .pawn: ""
+        case .knight: "N"
+        case .bishop: "B"
+        case .rook: "R"
+        case .queen: "Q"
+        case .king: "K"
+        }
+    }
 }
 
 nonisolated struct Piece: Sendable, Hashable {
