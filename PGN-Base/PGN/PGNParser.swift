@@ -110,6 +110,27 @@ nonisolated enum PGNParser {
         return games
     }
 
+    /// Reads only the tag pairs at the start of a game, stopping where the movetext begins.
+    static func parseTags(from text: String) -> [PGNTag] {
+        var reader = ScalarReader(text)
+        var tags: [PGNTag] = []
+        while true {
+            _ = reader.read(while: \.properties.isWhitespace)
+            switch reader.peek() {
+            case "[":
+                if let tag = reader.readTag() { tags.append(tag) }
+            case "{":
+                // Comments can appear before or between tags, such as a note at the top of a file.
+                _ = reader.read(until: "}")
+                reader.advance()
+            case ";":
+                _ = reader.read(until: "\n")
+            default:
+                return tags
+            }
+        }
+    }
+
     /// Symbols for the standard move-quality numeric annotation glyphs (NAGs).
     private static let nagSymbols = [1: "!", 2: "?", 3: "!!", 4: "??", 5: "!?", 6: "?!"]
 

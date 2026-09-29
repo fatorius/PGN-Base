@@ -17,7 +17,7 @@ nonisolated struct PGNMove: Sendable, Hashable {
 /// One game from a PGN file: its header tags and main-line moves.
 nonisolated struct PGNGame: Identifiable, Sendable, Hashable {
     /// The game's position within its file.
-    let id: Int
+    var id: Int
     var tags: [PGNTag] = []
     var moves: [PGNMove] = []
     /// A comment that appears before the first move.

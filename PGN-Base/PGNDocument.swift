@@ -7,24 +7,24 @@ extension UTType {
 }
 
 /// A PGN file, which may contain any number of games.
+///
+/// Reading only captures the file's bytes; `GameDatabase` finds and parses the games afterward,
+/// so even very large files open without blocking.
 nonisolated struct PGNDocument: FileDocument {
     static let readableContentTypes: [UTType] = [.pgn]
 
-    var games: [PGNGame]
+    let data: Data
 
-    init(games: [PGNGame] = []) {
-        self.games = games
+    init(data: Data) {
+        self.data = data
     }
 
     init(configuration: ReadConfiguration) throws {
+        // File wrappers memory-map regular files by default, so this doesn't copy the whole file.
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        // PGN is usually UTF-8, but older files are often Latin-1.
-        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw CocoaError(.fileReadInapplicableStringEncoding)
-        }
-        games = PGNParser.parseGames(from: text)
+        self.data = data
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
