@@ -10,9 +10,22 @@
 		000000000000000000000120 /* pgn-annotator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "pgn-annotator.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6ACDBAE0306B28C900F81544 /* Exceptions for "PGN-Base" folder in "PGN-Base" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 000000000000000100000000 /* PGN-Base */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		000000000000000000000010 /* PGN-Base */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6ACDBAE0306B28C900F81544 /* Exceptions for "PGN-Base" folder in "PGN-Base" target */,
+			);
 			path = "PGN-Base";
 			sourceTree = "<group>";
 		};
@@ -267,6 +280,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PGN-Base/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "PGN Annotator";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.board-games";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Hugo Souza";
@@ -316,6 +330,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PGN-Base/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "PGN Annotator";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.board-games";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Hugo Souza";
