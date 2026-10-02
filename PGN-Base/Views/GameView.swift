@@ -16,6 +16,8 @@ struct GameView: View {
     @State private var pendingPromotion: Move?
     /// Whether the picker for which variation to follow is showing.
     @State private var isChoosingVariation = false
+    /// The line last followed at each branch point: the child index taken, keyed by the branch point's path.
+    @State private var lastChoice: [MovePath: Int] = [:]
     @FocusState private var isEditingComment: Bool
 
     var body: some View {
@@ -53,6 +55,7 @@ struct GameView: View {
         }
         .onChange(of: node) {
             selectedSquare = nil
+            rememberChoices(toReach: node)
         }
         .confirmationDialog(
             "Promote Pawn",
@@ -173,10 +176,17 @@ struct GameView: View {
         let siblings = game.nodes[node].parent.map { game.nodes[$0].children.count } ?? 1
         let children = game.nodes[node].children
         let hasNext = !children.isEmpty
+        let previousBranch = game.previousBranchPoint(before: node)
         return HStack(spacing: 16) {
             Button("First Move", systemImage: "chevron.backward.to.line") { path = [] }
                 .keyboardShortcut(navigationShortcut(.leftArrow, modifiers: .command))
                 .disabled(node == 0)
+            Button("Previous Branch", systemImage: "arrow.turn.left.up") {
+                if let previousBranch { path = game.path(to: previousBranch) }
+            }
+            .keyboardShortcut(navigationShortcut(.leftArrow, modifiers: .shift))
+            .disabled(previousBranch == nil)
+            .help("Go back to where the line branches")
             Button("Previous Move", systemImage: "chevron.backward") { path = Array(nodePath.dropLast()) }
                 .keyboardShortcut(navigationShortcut(.leftArrow))
                 .disabled(node == 0)
@@ -196,6 +206,7 @@ struct GameView: View {
                     options: children.map { child in
                         "\(before?.moveNumberLabel ?? "") \(game.nodes[child].san)\(game.nodes[child].annotation ?? "")"
                     },
+                    initialSelection: lastChoice[nodePath] ?? 0,
                     onChoose: { index in
                         isChoosingVariation = false
                         path = nodePath + [index]
@@ -205,8 +216,14 @@ struct GameView: View {
                     }
                 )
             }
+            Button("Next Branch", systemImage: "arrow.turn.right.down") {
+                path = nodePath + rememberedContinuation(from: node, stoppingAtBranch: true)
+            }
+            .keyboardShortcut(navigationShortcut(.rightArrow, modifiers: .shift))
+            .disabled(!hasNext)
+            .help("Go ahead to where the line branches")
             Button("End of Line", systemImage: "chevron.forward.to.line") {
-                path = nodePath + Array(repeating: 0, count: game.line(continuingFrom: node).count)
+                path = nodePath + rememberedContinuation(from: node, stoppingAtBranch: false)
             }
             .keyboardShortcut(navigationShortcut(.rightArrow, modifiers: .command))
             .disabled(!hasNext)
@@ -224,6 +241,36 @@ struct GameView: View {
         }
         .labelStyle(.iconOnly)
         .controlSize(.large)
+    }
+
+    /// Records, at each branch point on the way to `node`, which line was taken.
+    private func rememberChoices(toReach node: Int) {
+        let nodePath = game.path(to: node)
+        var current = 0
+        for (depth, step) in nodePath.enumerated() {
+            if game.isBranchPoint(current) {
+                lastChoice[Array(nodePath.prefix(depth))] = step
+            }
+            current = game.nodes[current].children[step]
+        }
+    }
+
+    /// The steps from `node` along the lines last followed at each branch point (or the first line
+    /// where there's none), to the end of the line or, if `stoppingAtBranch`, the next branch point.
+    private func rememberedContinuation(from node: Int, stoppingAtBranch: Bool) -> MovePath {
+        var nodePath = game.path(to: node)
+        var steps: MovePath = []
+        var current = node
+        while !game.nodes[current].children.isEmpty {
+            let children = game.nodes[current].children
+            let remembered = lastChoice[nodePath] ?? 0
+            let step = children.indices.contains(remembered) ? remembered : 0
+            steps.append(step)
+            nodePath.append(step)
+            current = children[step]
+            if stoppingAtBranch, game.isBranchPoint(current) { break }
+        }
+        return steps
     }
 
     private func switchVariation(from nodePath: MovePath, by offset: Int, count: Int) {

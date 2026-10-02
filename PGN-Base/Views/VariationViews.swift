@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Chooses which line to follow when stepping forward into a move with variations, in the
-/// style of ChessBase: the main line is highlighted first; ↑ and ↓ pick, Return or → follows,
+/// style of ChessBase: the line last followed is highlighted first; ↑ and ↓ pick, Return or → follows,
 /// and Esc or ← cancels. Clicking a move follows it too.
 struct VariationPicker: View {
     /// The moves to choose from, in order; the first is the main line.
@@ -9,8 +9,16 @@ struct VariationPicker: View {
     let onChoose: (Int) -> Void
     let onCancel: () -> Void
 
-    @State private var highlighted = 0
+    @State private var highlighted: Int
     @FocusState private var isFocused: Bool
+
+    /// - Parameter initialSelection: The option highlighted first, such as the line last followed here.
+    init(options: [String], initialSelection: Int = 0, onChoose: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
+        self.options = options
+        self.onChoose = onChoose
+        self.onCancel = onCancel
+        _highlighted = State(initialValue: options.indices.contains(initialSelection) ? initialSelection : 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {

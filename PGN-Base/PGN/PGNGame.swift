@@ -82,6 +82,21 @@ nonisolated struct PGNGame: Identifiable, Sendable, Hashable {
         return line
     }
 
+    /// Whether the game branches after `node`, so there's more than one move to choose from.
+    func isBranchPoint(_ node: Int) -> Bool {
+        nodes[node].children.count > 1
+    }
+
+    /// The nearest move before `node` where the game branches, or `nil` if there's none.
+    func previousBranchPoint(before node: Int) -> Int? {
+        var ancestor = nodes[node].parent
+        while let current = ancestor {
+            if isBranchPoint(current) { return current }
+            ancestor = nodes[current].parent
+        }
+        return nil
+    }
+
     func node(at path: MovePath) -> Int? {
         var current = 0
         for step in path {
